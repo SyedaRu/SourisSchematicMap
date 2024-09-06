@@ -6,19 +6,25 @@ import pandas as pd
 import xml.etree.ElementTree as ET
 import os
 from pdfdocument.document import PDFDocument
-# import cairosvg
+
+from selenium import webdriver
+from selenium.webdriver.common.keys import Keys
+import time, keyboard
+import pyautogui
+import pdfkit
 
 path_to_value_file = "C:/Users/syedaR/Desktop/Souris/2023 NaturalFlowSchematic.xlsx"
 base_svg_path = "Asset12.svg"
 scale_amount = 0.001
 
 ### Coordinates of each location within the specific base SVG
+### These names should be the same as the "Name" column of the Excel data file
 location_coordinates = {
     0: {
         "Below Rafferty": [(0, 21)],
-        "Boundary Reservoir Diversion": [(2, 3)],
+        "Unlabeled Numbers below Boundary Dam": [(2, 3)],
         "Short Creek near Roche Percee": [(5, 7)],
-        "Natural Flow at Sherwood": [(10, 11)],
+        "Sherwood Recorded Flow": [(10, 11)],
         'Moose Mountain Creek below Grant Devine (used to be "near Oxbow")': [(16, 17)],
     },
     1: {
@@ -51,16 +57,21 @@ location_coordinates = {
         "Long Creek near Noonan": [(9, 23)],
     },
     8: {
-        "Unlabeled Numbers below Boundary Dam": [(2, 3)],
+        "Boundary Reservoir Diversion": [(2, 3)],
     }
 }
 
 ##### Functions for SVG maniplation
-# Function to calculate the Euclidean distance between two points
+
+"""Function to calculate the Euclidean distance between two points"""
 def calculate_distance(x1, y1, x2, y2):
     return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
-# Function to calculate new coordinates for a given ratio
+"""Function to calculate new coordinates of a line for a given ratio
+    x1,y1: x and y coordinates of start point of the line
+    x2,y2: x and y coordinates of end point of the line
+    ratio: 
+""" 
 def adjust_coordinates(x1, y1, x2, y2, ratio):
     x1_new = x1 + (x2 - x1) * (1 - ratio) / 2
     y1_new = y1 + (y2 - y1) * (1 - ratio) / 2
@@ -69,10 +80,39 @@ def adjust_coordinates(x1, y1, x2, y2, ratio):
     return (x1_new, y1_new, x2_new, y2_new)
 
 
+"""Breaks a complex number into its real (x) and imaginary (y) parts."""
 def get_xy(point):
-    return point.real, point.imag
+   return point.real, point.imag
 
 def path_to_points(path):
+    """
+    Converts a list of path segments into a list of unique 2D points.
+
+    Parameters:
+        path (list): A list of path segment objects. Each segment is expected to have a
+                     `start` attribute, which is a complex number representing the starting
+                     point of the segment.
+
+    Returns:
+        list: A list of tuples `(x, y)`, where:
+              - `x` is the real part of the segment's start point.
+              - `y` is the imaginary part of the segment's start point.
+              The list contains unique points without consecutive duplicates.
+
+
+     # Example path with segments
+        path = [
+            Segment(1 + 2j),
+            Segment(3 + 4j),
+            Segment(3 + 4j),  # Duplicate start point
+            Segment(5 + 6j)
+        ]
+
+        points = path_to_points(path)
+        print(points)  # Output: [(1.0, 2.0), (3.0, 4.0), (5.0, 6.0)]
+        ```
+
+    """
     points = []
     for segment in path:
         start_point = (segment.start.real, segment.start.imag)
@@ -83,7 +123,7 @@ def path_to_points(path):
    
     return points
 
-# This function gets the decameter value given the dataframe and name of location
+# This function gets the decameter value when given the dataframe and name of location
 def get_value_by_name(df, name):
     # Using boolean indexing to filter the DataFrame
     value = df.loc[df["Name"] == name, "Cubic Decametres"]
@@ -93,38 +133,51 @@ def get_value_by_name(df, name):
         return 0
 
 def change_svg_points(paths, coor,value_df, scale):
-    """Updates the path variable with the new corrdinates of each location based on the scale amount
+    """
+    Updates the path coordinates based on scaling the distances between specified locations.
+
+    Parameters:
+        paths (list): List of SVG path objects with start coordinates as complex numbers.
+        coor (dict): Dictionary containing the indices of path segments that represent locations.
+        value_df (DataFrame): DataFrame containing the desired distances between points.
+        scale (float): Scaling factor to adjust the distances between points.
+
+    Returns:
+        None: The function updates the `paths` in place by modifying the start coordinates.
     
-    Keyword arguments:
-    argument -- description
-    Return: return_description
+    Notes:
+        - The function calculates the current distance between two points, then adjusts 
+          the coordinates according to the desired distance from `value_df` scaled by `scale`.
+        - Special handling is applied to the "Rafferty to Boundary Reservoir Pumpage" and 
+          "Net Gain in North Dakota" locations to update additional path points.
     """
     for object_idx, object in coor.items():
         for location, coords in object.items():
             for indices in coords:
                 i = indices[0]
                 j = indices[1]   
-     
-                # print("Before adjust => ", location, ": ",paths[object_idx][i].start, paths[object_idx][j].start)
+
+                # get x and y from complex numbers
                 point1 = get_xy(paths[object_idx][i].start)
                 point2 = get_xy(paths[object_idx][j].start)
 
                 # Calculate current distance between the two points
                 current_distance = calculate_distance(*point1, *point2)
-                # Get the new distance to change to 
+
+                # Get the desired distance distance between two points(representing the volume at the location)
                 desired_distance = int(get_value_by_name(value_df,location))* scale
 
                 # Calculate the ratio
                 ratio = desired_distance / current_distance
         
-
-                # Adjust coordinates
+                # Adjust coordinates and separate the two points
                 A1, A2 = adjust_coordinates(*point1, *point2, ratio)[:2], adjust_coordinates(*point1, *point2, ratio)[2:]
 
+                # Convert the points into complex number to be able to draw it using the svg package
                 paths[object_idx][i].start = complex(*A1)
                 paths[object_idx][j].start = complex(*A2)
                 
-
+                # Extra points adjsted for the two specific locations
                 if location == "Rafferty to Boundary Reservoir Pumpage":
                     if indices[0] == 0:
                         paths[object_idx][13].start = complex(*A1) 
@@ -132,152 +185,54 @@ def change_svg_points(paths, coor,value_df, scale):
                     paths[object_idx][24].start = complex(*A1)
 
         
-# def draw_svg(paths, svg_filename, location_coordinates):
-#     dwg = svgwrite.Drawing(svg_filename + ".svg", profile='full')
-
-#     # Define an arrow marker
-#     arrow_marker = dwg.marker(insert=(2, 2), size=(4, 4), orient="auto")
-#     arrow_marker.add(dwg.path(d="M0,0 L0,4 L4,2 Z", fill='black'))
-#     dwg.defs.add(arrow_marker)
-
-#     # Draw the paths (these are the main flow paths)
-#     for i, path in enumerate(paths):
-#         points = path_to_points(paths[i])
-#         dwg.add(dwg.polygon(
-#             points=points,
-#             fill="#d3d3d3",
-#             stroke='yellow',
-#             stroke_miterlimit=10
-#         ))
-
-#     # Add labels with arrows
-#     for object_idx, object in location_coordinates.items():
-#         for location, coords in object.items():
-#             for indices in coords[:1]:
-#                 i = indices[0]
-#                 j = indices[1]
-#                 print(location, ": ",paths[object_idx][i].start, paths[object_idx][j].start)
-
-#                 x1, y1 = get_xy(paths[object_idx][i].start)
-#                 x2, y2 = get_xy(paths[object_idx][j].start)
-
-#                 if object_idx == 1 and location == "Grant Devine Reservoir Diversion":
-#                     y1 -= 5
-#                     y2 -=5
-#                 if location == "Moose Mountain Creek below Grant Devine (used to be 'near Oxbow')":
-#                     y1 += 5
-#                     y2 += 5
-
-#                 if (x2-x1)<5:
-#                     arrow_length = 2
-#                 else:
-#                     arrow_length = 0.2
-#                 # Calculate an outward position for the arrows to start from
-#                 arrow_start_x1 = x1 + (x1 - x2) * arrow_length  # Move slightly outward
-#                 arrow_start_y1 = y1 + (y1 - y2) * arrow_length  # Move slightly outward
-
-#                 arrow_start_x2 = x2 + (x2 - x1) * arrow_length  # Move slightly outward
-#                 arrow_start_y2 = y2 + (y2 - y1) * arrow_length  # Move slightly outward
-
-#                 # Position the label near one of the arrows
-#                 label_offset_x = 5
-#                 label_offset_y = -5
-#                 # label_x = arrow_start_x1 + label_offset_x
-#                 # label_y = arrow_start_y1 + label_offset_y
-#                 line_height = 4  # Height between lines of text
-#                 num_lines = len(location)
-
-#                 for idx, char in enumerate(location.split()):
-#                     label_x = arrow_start_x1 + label_offset_x
-#                     label_y = arrow_start_y1 + label_offset_y + idx * line_height
-#                     dwg.add(dwg.text(char, insert=(label_x, label_y), fill='black', font_size='4px'))
-
-#                 # Draw the first arrow pointing to (x1, y1)
-#                 dwg.add(dwg.line(start=(arrow_start_x1, arrow_start_y1), end=(x1, y1), stroke='black', stroke_width=0.5, marker_end=arrow_marker.get_funciri()))
-
-#                 # Draw the second arrow pointing to (x2, y2)
-#                 dwg.add(dwg.line(start=(arrow_start_x2, arrow_start_y2), end=(x2, y2), stroke='black', stroke_width=0.5, marker_end=arrow_marker.get_funciri()))
-
-#     dwg.save()
-# def draw_pie_chart(dwg, center, radius, data, colors, labels):
-#     total = sum(data)
-#     start_angle = 0
-
-#     for i, value in enumerate(data):
-#         slice_angle = 360 * (value / total)
-#         end_angle = start_angle + slice_angle
-
-#         # Convert angles to radians
-#         start_rad = math.radians(start_angle)
-#         end_rad = math.radians(end_angle)
-
-#         # Convert angles to radians
-#         mid_angle = start_angle + (slice_angle / 2)
-#         mid_rad = math.radians(mid_angle)
-
-#         # Calculate the coordinates for the arc
-#         start_x = center[0] + radius * math.cos(start_rad)
-#         start_y = center[1] + radius * math.sin(start_rad)
-#         end_x = center[0] + radius * math.cos(end_rad)
-#         end_y = center[1] + radius * math.sin(end_rad)
-
-#         # Large arc flag
-#         large_arc_flag = 1 if slice_angle > 180 else 0
-
-#         # Path description
-#         path_data = [
-#             f"M{center[0]},{center[1]}",
-#             f"L{start_x},{start_y}",
-#             f"A{radius},{radius} 0 {large_arc_flag},1 {end_x},{end_y}",
-#             "Z"
-#         ]
-
-#         # Add the pie slice
-#         dwg.add(dwg.path(d=" ".join(path_data), fill=colors[i]))
-
-#         # Calculate arrow and label positions
-#         arrow_start_x = center[0] + radius * 0.8 * math.cos(mid_rad)
-#         arrow_start_y = center[1] + radius * 0.8 * math.sin(mid_rad)
-#         arrow_end_x = center[0] + radius * 1.2 * math.cos(mid_rad)
-#         arrow_end_y = center[1] + radius * 1.2 * math.sin(mid_rad)
-
-#         # Add arrow line
-#         dwg.add(dwg.line(start=(arrow_start_x, arrow_start_y), end=(arrow_end_x, arrow_end_y), 
-#                          stroke='black', stroke_width=0.5, marker_end='url(#arrow)'))
-
-#         # Add label
-#         label_x = arrow_end_x + (10 if math.cos(mid_rad) >= 0 else -50)
-#         label_y = arrow_end_y + (15 if math.sin(mid_rad) >= 0 else -7)
-#         dwg.add(dwg.text(labels[i], insert=(label_x, label_y), fill='black', font_size='8px'))
-
-#         # Update start angle for the next slice
-#         start_angle = end_angle
-
-#     # Calculate the percentage of Canada's diversion
-#     canada_net = data[1]  # Assuming data[0] is for Canada
-#     canada_percentage = (canada_net / total) * 100
-
-#     # Add side label
-#     side_label_text = f"Canada diverted {canada_percentage:.1f}% of the natural flow"
-#     side_label_x = center[0] + radius + 20  # Adjust X position as needed
-#     side_label_y = center[1] - radius  # Adjust Y position as needed
-
-#     # Determine the box size based on the text size
-#     box_padding = 10
-#     text_length = len(side_label_text) * 6  # Estimate text length (adjust factor as needed)
-#     box_width = text_length + box_padding * 2
-#     box_height = 20 + box_padding * 2
-    
-#     # Draw the box
-#     dwg.add(dwg.rect(insert=(side_label_x - box_padding, side_label_y - 15), 
-#                      size=(box_width, box_height), 
-#                      fill='lightgray', stroke='black'))
-#     dwg.add(dwg.text(side_label_text, insert=(side_label_x, side_label_y), fill='black', font_size='12px'))
-
 def draw_pie_chart(dwg, center, radius, data, colors, labels):
+    """
+    Draws a pie chart with arrows, labels, and a side label showing Canada's diversion percentage.
+    
+    Parameters:
+        dwg (svgwrite.Drawing): An SVG drawing object used to draw the pie chart.
+        center (tuple): The (x, y) coordinates for the center of the pie chart.
+        radius (float): The radius of the pie chart.
+        data (list): A list of values representing the size of each pie slice.
+        colors (list): A list of colors corresponding to each pie slice.
+        labels (list): A list of labels corresponding to each pie slice. Each label should include both text and a numerical part.
+
+    Returns:
+        None: The function draws the pie chart directly on the provided SVG drawing (`dwg`).
+    
+    Description:
+        - This function draws a pie chart by iterating over the `data` list, calculating the slice angle for each value based on its proportion of the total.
+        - For each slice, it draws a path to represent the pie slice, with a white stroke between slices for clarity.
+        - Arrows are drawn from each slice to its corresponding label, which is split into two lines: the text part and the numerical part.
+        - It also adds a side label for Canada's diversion, showing the percentage of the natural flow diverted by Canada.
+
+    Example:
+        ```python
+        import svgwrite
+        import math
+
+        # Create an SVG drawing object
+        dwg = svgwrite.Drawing('pie_chart.svg', profile='tiny')
+
+        # Define pie chart parameters
+        center = (150, 150)
+        radius = 100
+        data = [97,604, 120,395]
+        colors = ['blue', 'red']
+        labels = ['Flow received by the US 120,395 (97,604)', 'Canada net depletion 97,604 (60,304)']
+
+        # Draw pie chart
+        draw_pie_chart(dwg, center, radius, data, colors, labels)
+
+        # Save the SVG file
+        dwg.save()
+        ```
+    """
+    # Total portion of the pie (Canada net depletion + Flow received by USA)
     total = sum(data)
     start_angle = 0
 
+    # Loops through the two data values and creates its slice on the pie 
     for i, value in enumerate(data):
         slice_angle = 360 * (value / total)
         end_angle = start_angle + slice_angle
@@ -297,7 +252,7 @@ def draw_pie_chart(dwg, center, radius, data, colors, labels):
         # Large arc flag
         large_arc_flag = 1 if slice_angle > 180 else 0
 
-        # Path description
+        # Path description of a circle
         path_data = [
             f"M{center[0]},{center[1]}",
             f"L{start_x},{start_y}",
@@ -305,29 +260,37 @@ def draw_pie_chart(dwg, center, radius, data, colors, labels):
             "Z"
         ]
 
-        # Add the pie slice
-        dwg.add(dwg.path(d=" ".join(path_data), fill=colors[i]))
+        # Add the pie slice with a stroke (white line between slices)
+        dwg.add(dwg.path(d=" ".join(path_data), fill=colors[i], stroke='white', stroke_width=1))
 
         # Calculate arrow and label positions
         arrow_start_x = center[0] + radius * 0.8 * math.cos(mid_rad)
         arrow_start_y = center[1] + radius * 0.8 * math.sin(mid_rad)
-        arrow_end_x = center[0] + radius * 1.2 * math.cos(mid_rad)
-        arrow_end_y = center[1] + radius * 1.2 * math.sin(mid_rad)
+        arrow_end_x = center[0] + radius * 1.6 * math.cos(mid_rad)
+        arrow_end_y = center[1] + radius * 1.6 * math.sin(mid_rad)
 
         # Add arrow line
         dwg.add(dwg.line(start=(arrow_start_x, arrow_start_y), end=(arrow_end_x, arrow_end_y), 
                          stroke='black', stroke_width=0.5, marker_end='url(#arrow)'))
 
         # Add label
-        label_x = arrow_end_x + (8 if math.cos(mid_rad) >= 0 else -50)
-        label_y = arrow_end_y + (15 if math.sin(mid_rad) >= 0 else -5)
-        dwg.add(dwg.text(labels[i], insert=(label_x, label_y), fill='black', font_size='8px'))
+        label_x = arrow_end_x + (5 if math.cos(mid_rad) >= 0 else -10)
+        label_y = arrow_end_y + (7 if math.sin(mid_rad) >= 0 else -5)
+
+        # Split the label into two parts: text and numbers
+        text_part = labels[i].rsplit(' ', 2)[0]  # Everything before the first number
+        number_part = ' '.join(labels[i].rsplit(' ', 2)[1:])  # The last number and parentheses
+
+        # Add the text part on the first line
+        dwg.add(dwg.text(text_part, insert=(label_x, label_y), fill='black', font_size='6px'))
+        dwg.add(dwg.text(number_part, insert=(label_x, label_y + 8), fill='black', font_size='6px'))
 
         # Update start angle for the next slice
         start_angle = end_angle
 
+    ## Prepare the Box and info
     # Calculate the percentage of Canada's diversion
-    canada_net = data[1]  # Assuming data[0] is for Canada
+    canada_net = data[1] 
     canada_percentage = (canada_net / total) * 100
 
     # Add side label with a box split into two lines
@@ -335,8 +298,9 @@ def draw_pie_chart(dwg, center, radius, data, colors, labels):
     line2_text = f"{canada_percentage:.1f}% of the"
     line3_text = "Natural flow"
     
-    side_label_x = center[0] + radius + 20  # Adjust X position as needed
-    side_label_y = center[1]  # Adjust Y position as needed
+    # Adjust the position of the box as needed
+    side_label_x = center[0] + radius + 20 
+    side_label_y = center[1] 
     
     # Determine the box size based on the text size
     box_padding = 5
@@ -357,10 +321,9 @@ def draw_pie_chart(dwg, center, radius, data, colors, labels):
 
 def draw_svg(paths, svg_filename, location_coordinates, data, y_shift=100):
     data.set_index("Name",inplace = True)    
-    print(data)
+
     # Initialize drawing
     dwg = svgwrite.Drawing(svg_filename + ".svg", profile='full', size=(1000, 1000))  # Specify size if needed
-
 
     # Define an arrow marker
     arrow_marker = dwg.marker(insert=(2, 2), size=(4, 4), orient="auto")
@@ -375,11 +338,11 @@ def draw_svg(paths, svg_filename, location_coordinates, data, y_shift=100):
     for i, path in enumerate(paths):
         points = path_to_points(paths[i])
         # Adjust the y-coordinates by adding y_shift
-        adjusted_points = [(x, y + y_shift) for x, y in points]
+        # adjusted_points = [(x, y + y_shift) for x, y in points]
         polygon = dwg.polygon(
             points=points,
             fill="#d3d3d3",
-            stroke='yellow',
+            stroke='gray',
             stroke_miterlimit=10
         )
         dwg.add(polygon)
@@ -399,76 +362,167 @@ def draw_svg(paths, svg_filename, location_coordinates, data, y_shift=100):
                 x1, y1 = get_xy(paths[object_idx][i].start)
                 x2, y2 = get_xy(paths[object_idx][j].start)
 
+                # Adjusting specific arrow positions
                 if object_idx == 1 and location == "Grant Devine Reservoir Diversion":
                     y1 -= 5
                     y2 -= 5
+                if location == "Below Rafferty":
+                    x1 += 12
+                    y1 += (4)
+                    x2 += 3
+                    y2 += 8
+                if location == "Nickel Lake & Wayburn Diversion":
+                    x1 += 0
+                    y1 += -7
+                    x2 += -3
+                    y2 += -2
+                
+                if location == 'Souris River near Ralph (used to be "near Halbrite")':
+                    x1 += 7
+                    y1 += 5
+                    x2 += 5
+                    y2 += 8
+                if location == 'Short Creek near Roche Percee':
+                    x1 += -4
+                    y1 += 20
+                    x2 += -8
+                    y2 += 20
+                if location == 'Moose Mountain Creek below Grant Devine (used to be "near Oxbow")':
+                    x1 += 0
+                    y1 += 10
+                    x2 += 4
+                    y2 += 10
+                if location == "Moose Mountain Lake Diversion":
+                    x1 += -2
+                    y1 += -4
+                    x2 += -2
+                    y2 += -2
+                if location == "Unlabeled Numbers below Boundary Dam":
+                    x1 += 0
+                    y1 += -2
+                    x2 += 0
+                    y2 += -2
                
-
                 ## Arrows
-                arrow_length = 8
+                arrow_length = 15
 
                 # Calculate the distance between the points
-                distance = calculate_distance(x1, y1, x2, y2)
-                
-                if distance == 0:
+                current_distance = calculate_distance(x1, y1, x2, y2)
+
+                if current_distance == 0:
                     # Handle zero distance case
-                    distance = 1  # Skip this arrow or handle it differently
+                    current_distance = 1
 
+                # Calculate the ratio to move the arrow a bit further apart than the points
+                new_distance = current_distance + 8
+                ratio = (new_distance) / current_distance
+
+                x1,y2,x2,y2 = adjust_coordinates(x1,y1,x2,y2, ratio)
+              
                 # Calculate arrow start positions based on fixed arrow length
-                arrow_start_x1 = x1 + (x1 - x2) * (arrow_length / distance)
-                arrow_start_y1 = y1 + (y1 - y2) * (arrow_length / distance)
+                arrow_start_x1 = x1 + (x1 - x2) * (arrow_length / new_distance)
+                arrow_start_y1 = y1 + (y1 - y2) * (arrow_length / new_distance)
 
-                arrow_start_x2 = x2 + (x2 - x1) * (arrow_length / distance)
-                arrow_start_y2 = y2 + (y2 - y1) * (arrow_length / distance)
+                arrow_start_x2 = x2 + (x2 - x1) * (arrow_length / new_distance)
+                arrow_start_y2 = y2 + (y2 - y1) * (arrow_length / new_distance)
 
+                # Label position from the arrow adjustment
                 label_offset_x = 5
                 label_offset_y = -5
-                line_height = 4
+                line_height = 6
                 
-                label_to_display = location + " " + str(data.at[location, 'Cubic Decametres'])
-                for idx, char in enumerate(label_to_display.split()):
+                # Label and values to display
+                deca_value = data.at[location, 'Cubic Decametres']
+                acre_value = data.at[location, 'Acre-feet']
+                name_to_display = data.at[location, 'Name to show']
+
+                label_to_display = name_to_display + " " + f"{deca_value:,}" + " (" + f"{int(acre_value):,}" + ")"
+                split_label = label_to_display.split()
+                combined_last_two = " ".join(split_label[-2:])
+                new_split_label = split_label[:-2] +[(combined_last_two)]
+
+                # Position the labels of each location
+                # These can be used the reposition the labels if any is overlapping or in the wrong position
+                for idx, char in enumerate(new_split_label):
                     label_x = arrow_start_x1 + label_offset_x
-                    label_y = arrow_start_y1 + label_offset_y + idx * line_height
+                    label_y = arrow_start_y1 + label_offset_y + idx * (line_height) + 5
+
+                    #`object_idx` corresponds to the keys in the `location_coordinates` dictionary 
+                    # at the top of this file. This dictionary contains specific indices as its keys,
+                    # each representing a location.
                     if object_idx == 0:
-                        label_x = arrow_start_x1 + label_offset_x - 10
-                        label_y = arrow_start_y1 + 10 + label_offset_y + idx * 4
-                        if location == "Boundary Reservoir Diversion":
-                            label_x += 25
-                            label_y -= 5
+                        label_x += 0
+                        label_y += 10 -3
                     if object_idx == 1:
-                        label_x = arrow_start_x1 + label_offset_x - 5
-                        label_y = arrow_start_y1 - 8 + label_offset_y + idx * 4
+                        label_x += 0
+                        label_y += - 8 
                     if location == "Moose Mountain Lake Diversion":
-                        label_y = arrow_start_y1 - 7 + label_offset_y + idx * 4
-                        label_x -= 10
-                    if object_idx == 8:
-                        ## for Unlabeled under Bourdary
-                        label_x += 10
-                        label_y += 17
+                        label_x += -35
+                        label_y += -33
+                    if location == "Moose Mountain Creek below Moose Mountain Lake":
+                        label_x += -3
+                        label_y += -5
+                    if location == 'Moose Mountain Creek below Grant Devine (used to be "near Oxbow")':
+                        label_x += -2
+                        label_y += -18
+                    if location == "Unlabeled Numbers below Boundary Dam":
+                        label_x += 25
+                        label_y += 3
+                    if location == "Boundary Reservoir Diversion":
+                        label_x += 20
+                        label_y += 10
+                    if location == "Yellow Grass Ditch & Tatagwa Lake Contribution":
+                        label_x += -3
+                        label_y += -40
                     if location == 'Souris River near Ralph (used to be "near Halbrite")':
-                        label_x -= 15
-                        label_y += 8
+                        label_x -= 20
+                        label_y += 0
                     if object_idx == 2:
                         label_x -= 10
-                        label_y += 10
+                        label_y += 5
                     if location == "Nickel Lake & Wayburn Diversion":
-                        label_x -= 15
-                        label_y -= 15
+                        label_x += -25
+                        label_y += -40
                     if location == "Rafferty Reservoir & Estevan Usage":
-                        label_x = arrow_start_x2 + label_offset_x
-                        label_y = arrow_start_y2 + label_offset_y + idx * line_height
-                        
-
-                    dwg.add(dwg.text(char, insert=(label_x, label_y), fill='black', font_size='4px'))
-
+                        label_x = arrow_start_x2 + label_offset_x -30
+                        label_y = arrow_start_y2 + label_offset_y + idx * line_height - 35
+                    if location == "Below Rafferty":
+                        label_x += -15
+                        label_y += -8
+                    if location == 'Short Creek near Roche Percee':
+                        label_x += 42
+                        label_y += -10
+                    if location == 'Grant Devine Reservoir Diversion':
+                        label_x += -1
+                        label_y += -23
+                    if location == "Rafferty to Boundary Reservoir Pumpage":
+                        label_x += -9
+                        label_y += 2
+                    if location == "Long Creek near Maxim":
+                        label_x += -9
+                        label_y += -4
+                    if location == "Long Creek near Noonan":
+                        label_x += 65
+                        label_y += -10
+                    if location == "Net Gain in North Dakota":
+                        label_x += -10
+                        label_y += -2
+                    if location == "Boundary Reservoir Diversion Canal":
+                        label_x += 10
+                        label_y += -7
+                    
+                    # Drawing in the label
+                    dwg.add(dwg.text(char, insert=(label_x, label_y+5), fill='black', font_size='6px'))
+                
+                #Drawing the two arrows of each location
                 dwg.add(dwg.line(start=(arrow_start_x1, arrow_start_y1), end=(x1, y1), stroke='black', stroke_width=0.5, marker_end=arrow_marker.get_funciri()))
                 dwg.add(dwg.line(start=(arrow_start_x2, arrow_start_y2), end=(x2, y2), stroke='black', stroke_width=0.5, marker_end=arrow_marker.get_funciri()))
 
-                # Update bounding box with label positions
-                min_x = min(min_x, label_x)
-                max_x = max(max_x, label_x)
-                min_y = min(min_y, label_y)
-                max_y = max(max_y, label_y)
+                # # Update bounding box with label positions
+                # min_x = min(min_x, label_x)
+                # max_x = max(max_x, label_x)
+                # min_y = min(min_y, label_y)
+                # max_y = max(max_y, label_y)
 
     # Calculate the dimensions and center of the bounding box
     width = max_x - min_x + 50
@@ -485,19 +539,26 @@ def draw_svg(paths, svg_filename, location_coordinates, data, y_shift=100):
     dwg.add(dwg.line(start=(0, canada_usa_y), end=(800, canada_usa_y), stroke='black', stroke_width=0.5, stroke_dasharray="5,5"))
 
     # Label the line as "CANADA - UNITED STATES"s
-    dwg.add(dwg.text("CANADA", insert=(250, canada_usa_y - 5), fill='black', font_size='12px'))
-    dwg.add(dwg.text("UNITED STATES", insert=(260, canada_usa_y+10), fill='black', font_size='12px'))
+    dwg.add(dwg.text("CANADA", insert=(270, canada_usa_y - 5), fill='black', font_size='10px'))
+    dwg.add(dwg.text("UNITED STATES", insert=(260, canada_usa_y+10), fill='black', font_size='10px'))
 
     # Add the pie chart
     pie_center = (430, 300)  # Adjust this position to place the pie chart correctly
     pie_radius = 30000 * scale_amount
-
     
     canada_net = data.at["Canada net Depletions", 'Cubic Decametres']
     us_net = data.at["Flow received by the US",'Cubic Decametres']
-    pie_data = [us_net,canada_net]  # Example data: Adjust these values
-    pie_colors = ["blue", "red"]  # Example colors: Adjust these as needed
-    pie_labels = [ "Flow received by the USA","Canada net Depletions"]
+    pie_data = [us_net,canada_net]  
+    pie_colors = ["blue", "red"]  
+    
+    country_labels = ["Flow received by the US","Canada net Depletions"]
+    pie_labels = list()
+    for location in country_labels:
+        deca_value = data.at[location, 'Cubic Decametres']
+        acre_value = data.at[location, 'Acre-feet']
+        name_to_display = data.at[location, 'Name to show']
+        label_to_display = name_to_display + " " + f"{deca_value:,}" + " (" + f"{int(acre_value):,}" + ")"
+        pie_labels.append(label_to_display)
 
     # Define arrow marker
     arrow_marker = dwg.marker(insert=(2, 2), size=(4, 4), orient="auto")
@@ -508,128 +569,80 @@ def draw_svg(paths, svg_filename, location_coordinates, data, y_shift=100):
     
     # Add Title
     dwg.add(dwg.text("SCHEMATIC REPRESENTATION OF 2023 FLOWS IN THE SOURIS RIVER BASIN",
-                     insert=(center_x - 120, 0), fill='black', font_size='7px', font_weight="bold"))
+                     insert=(center_x -120, -30), fill='black', font_size='7px', font_weight="bold"))
     dwg.add(dwg.text("ABOVE SHERWOOD, NORTH DAKOTA, U.S.A.",
-                     insert=(center_x - 80, 5), fill='black', font_size='7px', font_weight="bold"))
+                     insert=(center_x -80, -20), fill='black', font_size='7px', font_weight="bold"))
 
     # Add Scale Ruler
-    scale_x = 480
+    scale_x = 420
     scale_y = 30
     scale_length = 50
-    dwg.add(dwg.line(start=(scale_x, scale_y), end=(scale_x + scale_length, scale_y), stroke='black', stroke_width=2))
-    for i in range(0, 51, 10):
-        tick_x = scale_x + i * (scale_length / 50)
-        tick_y = scale_y + 10
+    tick_height = 6
+    for i in range(0, 101, 20):
+        tick_x = scale_x + i * (scale_length / 100)
+        tick_y = scale_y + tick_height
         dwg.add(dwg.line(start=(tick_x, scale_y), end=(tick_x, tick_y), stroke='black', stroke_width=1))
-        dwg.add(dwg.text(str(i), insert=(tick_x - 5, tick_y + 15), fill='black', font_size='5px'))
+        dwg.add(dwg.text(str(i), insert=(tick_x, scale_y - 2), fill='black', font_size='5px'))    
+    dwg.add(dwg.line(start=(scale_x, scale_y+tick_height), end=(scale_x + scale_length, scale_y+tick_height), stroke='black', stroke_width=2))
+    dwg.add(dwg.text("CUBIC DECAMETRES", insert=(scale_x + scale_length + 10, scale_y + 5), fill='black', font_size='5px'))
+    dwg.add(dwg.text("Dam³ x 1000", insert=(scale_x , tick_y + 7), fill='black', font_size='5px'))
     dwg.add(dwg.text("VALUES SHOWN ARE IN CUBIC",
-                     insert=(scale_x , scale_y - 10), fill='black', font_size='5px'))
+                     insert=(scale_x -5, scale_y - 15), fill='black', font_size='5px'))
     dwg.add(dwg.text("DECAMETRES (ACRE-FEET)",
-                     insert=(scale_x , scale_y - 5), fill='black', font_size='5px'))
-    dwg.add(dwg.text("Dam³ x 1000", insert=(scale_x + scale_length + 10, scale_y + 5), fill='black', font_size='5px'))
+                     insert=(scale_x -3, scale_y - 10), fill='black', font_size='5px'))
+    
+    # Acre feet scale
+    scale_x = 420
+    scale_y = 55
+    scale_length = 50 /0.8107
+    tick_height = 6
+    for i in range(0, 101, 20):
+        tick_x = scale_x + i * (scale_length / 100)
+        tick_y = scale_y + tick_height
+        dwg.add(dwg.line(start=(tick_x, scale_y), end=(tick_x, tick_y), stroke='black', stroke_width=1))
+        dwg.add(dwg.text(str(i), insert=(tick_x, scale_y - 2), fill='black', font_size='5px'))    
+    dwg.add(dwg.line(start=(scale_x, scale_y+tick_height), end=(scale_x + scale_length, scale_y+tick_height), stroke='black', stroke_width=2))
+    dwg.add(dwg.text("ACRE-FEET", insert=(scale_x + scale_length + 10, scale_y + 5), fill='black', font_size='5px'))
+    dwg.add(dwg.text("ACRE-FEET x 1000", insert=(scale_x , tick_y + 7), fill='black', font_size='5px'))
 
-    # Save the SVG file
+    #Save the SVG file
     dwg.save()
 
-def get_svg_dimensions(filename):
-    # Parse the SVG file
-    tree = ET.parse(filename)
-    root = tree.getroot()
+"""
+Opens the svg in Edge browser and urges user to print it 
+"""
+def svgToPdf(path):
+    # Start the browser
+    driver = webdriver.Edge()  # Or whichever browser you're using
 
-    # SVG namespace
-    svg_namespace = {'svg': 'http://www.w3.org/2000/svg'}
-
-    # Get width and height attributes from the SVG element
-    width = root.get('width')
-    height = root.get('height')
-
-    # If dimensions are percentages or other units, you might need to handle conversion here
-    # For simplicity, assuming dimensions are in pixels
-    return float(width.replace('px', '').strip()), float(height.replace('px', '').strip())
-
-def convert_svg_to_pdf(filename):
-    doc = PDFDocument()
-    # Load an SVG file
-    doc.LoadFromSvg(filename)
-    # Get the size of the SVG content (assuming you have these methods available)
-    svg_width = doc.GetSvgWidth()  # Method to get the SVG width
-    svg_height = doc.GetSvgHeight()  # Method to get the SVG height
-    
-    # Set the page size of the PDF (optional, adjust if needed)
-    doc.SetPageSize(svg_width, svg_height)
-    
-    # Center the SVG content horizontally
-    # Calculate the x-position to center the SVG horizontally on the page
-    page_width = doc.GetPageWidth()
-    x_position = (page_width - svg_width) / 2
-    
-    # Translate and draw the SVG content
-    doc.Translate(x_position, 0)  # Move the content horizontally
-
-    # Save the SVG file to PDF format
-    doc.SaveToFile(filename+".pdf", FileFormat.PDF)
-    # Close the PdfDocument object
-    doc.Close()
-
-    # Function to convert SVG to PNG or PDF
-def convert_svg(filename, output_format='pdf'):
     try:
-        if output_format.lower() == 'png':
-            # Convert SVG to PNG
-            cairosvg.svg2png(url=f"{filename}.svg", write_to=f"{filename}.png")
-            print(f"SVG has been successfully converted to {filename}.png")
-        elif output_format.lower() == 'pdf':
-            # Convert SVG to PDF
-            cairosvg.svg2pdf(url=f"{filename}.svg", write_to=f"{filename}.pdf")
-            print(f"SVG has been successfully converted to {filename}.pdf")
-        else:
-            print("Unsupported format. Please choose either 'png' or 'pdf'.")
-    except Exception as e:
-        print(f"An error occurred: {e}")
+        # Open the SVG file in the browser
+        driver.get(path)
 
-def convert_svg_to_png(svg_filename, png_filename):
-    image = pyvips.Image.thumbnail(svg_filename, 300)
-    image.write_to_file(png_filename)
+        # Allow the page to load (you can tweak the delay if necessary)
+        time.sleep(2)
+
+        # Simulate Ctrl+P to open the print dialog
+        driver.execute_script('window.print();')
+
+        # Wait for the print dialog to process (adjust this timing as needed)
+        time.sleep(20)
+
+    finally:
+        # Always ensure the browser closes after the operation
+        driver.quit()
 
 
 if __name__ == "__main__":
     filename = "SchematicMap"
     
-    # The bin folder has the DLLs
-    current_dir = os.getcwd()
-    libvips = os.path.join(current_dir, "libvips-8.15.2")
-    # Construct the path to the bin folder within the libvips directory
-    libvips_bin = os.path.join(libvips, "libvips")
-    # print(libvips_bin)
-    # Add the bin folder to the PATH environment variable
-    os.environ['PATH'] += os.pathsep + libvips
-    # print(os.environ['PATH'])
-    
     paths, attribtue = svg2paths('Asset12.svg')
-    value_datatframe = pd.read_excel(path_to_value_file, "Natural Flow Schematic",usecols=["Name","Cubic Decametres"],header=1,nrows=25)
+    value_datatframe = pd.read_excel(path_to_value_file, "Natural Flow Schematic",usecols=["Name","Name to show", "Cubic Decametres","Acre-feet"],header=1,nrows=25)
     change_svg_points(paths,location_coordinates,value_datatframe,scale_amount)
     draw_svg(paths,filename, location_coordinates, value_datatframe)
 
-    # import pyvips
-    # # convert_svg_to_png("SchematicMap.svg", "SchematicMap.png")
-    # image = pyvips.Image.thumbnail("SchematicMap.svg", 300)
-    # image.write_to_file("SchematicMap.png")
-    input_file = "SchematicMap"
-    output_file = "SchematicMap.png"
+    svgToPdf(f'file:///{os.path.abspath(filename + ".svg")}')
 
-    # convert_svg(input_file)
 
-    # with wand.image.Image() as image:
-    #     with wand.color.Color('transparent') as background_color:
-    #         library.MagickSetBackgroundColor(image.wand, 
-    #                                         background_color.resource) 
-    #         image.read(blob=svg_file.read(), format="svg")
-    #         png_image = image.make_blob("png32")
-
-    # with open(output_file, "wb") as out:
-    #     out.write(png_image)
-
-    # drawing = svg2rlg(input_file)
-    # renderPM.drawToFile(drawing, output_file, fmt="PNG")
 
 
