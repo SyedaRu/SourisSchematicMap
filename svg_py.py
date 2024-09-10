@@ -343,7 +343,8 @@ def draw_svg(paths, svg_filename, location_coordinates, data, y_shift=100):
             points=points,
             fill="#d3d3d3",
             stroke='gray',
-            stroke_miterlimit=10
+            stroke_miterlimit=10,
+            stroke_opacity=0.4
         )
         dwg.add(polygon)
         # Update bounding box
@@ -436,7 +437,7 @@ def draw_svg(paths, svg_filename, location_coordinates, data, y_shift=100):
                 acre_value = data.at[location, 'Acre-feet']
                 name_to_display = data.at[location, 'Name to show']
 
-                label_to_display = name_to_display + " " + f"{deca_value:,}" + " (" + f"{int(acre_value):,}" + ")"
+                label_to_display = name_to_display + " " + f"{deca_value:,}" + " (" + f"{round(float(acre_value)):,}" + ")"
                 split_label = label_to_display.split()
                 combined_last_two = " ".join(split_label[-2:])
                 new_split_label = split_label[:-2] +[(combined_last_two)]
@@ -518,11 +519,11 @@ def draw_svg(paths, svg_filename, location_coordinates, data, y_shift=100):
                 dwg.add(dwg.line(start=(arrow_start_x1, arrow_start_y1), end=(x1, y1), stroke='black', stroke_width=0.5, marker_end=arrow_marker.get_funciri()))
                 dwg.add(dwg.line(start=(arrow_start_x2, arrow_start_y2), end=(x2, y2), stroke='black', stroke_width=0.5, marker_end=arrow_marker.get_funciri()))
 
-                # # Update bounding box with label positions
-                # min_x = min(min_x, label_x)
-                # max_x = max(max_x, label_x)
-                # min_y = min(min_y, label_y)
-                # max_y = max(max_y, label_y)
+                # Update bounding box with label positions
+                min_x = min(min_x, label_x)
+                max_x = max(max_x, label_x)
+                min_y = min(min_y, label_y)
+                max_y = max(max_y, label_y)
 
     # Calculate the dimensions and center of the bounding box
     width = max_x - min_x + 50
@@ -557,7 +558,7 @@ def draw_svg(paths, svg_filename, location_coordinates, data, y_shift=100):
         deca_value = data.at[location, 'Cubic Decametres']
         acre_value = data.at[location, 'Acre-feet']
         name_to_display = data.at[location, 'Name to show']
-        label_to_display = name_to_display + " " + f"{deca_value:,}" + " (" + f"{int(acre_value):,}" + ")"
+        label_to_display = name_to_display + " " + f"{deca_value:,}" + " (" + f"{round(float(acre_value)):,}" + ")"
         pie_labels.append(label_to_display)
 
     # Define arrow marker
@@ -569,9 +570,9 @@ def draw_svg(paths, svg_filename, location_coordinates, data, y_shift=100):
     
     # Add Title
     dwg.add(dwg.text("SCHEMATIC REPRESENTATION OF 2023 FLOWS IN THE SOURIS RIVER BASIN",
-                     insert=(center_x -120, -30), fill='black', font_size='7px', font_weight="bold"))
+                     insert=(center_x -120, -40), fill='black', font_size='7px', font_weight="bold"))
     dwg.add(dwg.text("ABOVE SHERWOOD, NORTH DAKOTA, U.S.A.",
-                     insert=(center_x -80, -20), fill='black', font_size='7px', font_weight="bold"))
+                     insert=(center_x -80, -30), fill='black', font_size='7px', font_weight="bold"))
 
     # Add Scale Ruler
     scale_x = 420
@@ -638,10 +639,11 @@ if __name__ == "__main__":
     
     paths, attribtue = svg2paths('Asset12.svg')
     value_datatframe = pd.read_excel(path_to_value_file, "Natural Flow Schematic",usecols=["Name","Name to show", "Cubic Decametres","Acre-feet"],header=1,nrows=25)
+    print(value_datatframe)
     change_svg_points(paths,location_coordinates,value_datatframe,scale_amount)
     draw_svg(paths,filename, location_coordinates, value_datatframe)
 
-    svgToPdf(f'file:///{os.path.abspath(filename + ".svg")}')
+    # svgToPdf(f'file:///{os.path.abspath(filename + ".svg")}')
 
 
 
