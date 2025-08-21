@@ -323,7 +323,7 @@ def draw_svg(paths, svg_filename, location_coordinates, data, y_shift=100):
     data.set_index("Name",inplace = True)    
 
     # Initialize drawing
-    dwg = svgwrite.Drawing(svg_filename + ".svg", profile='full', size=(1000, 1000))  # Specify size if needed
+    dwg = svgwrite.Drawing(svg_filename + ".svg", profile='full', size=(1000, 1000))
 
     # Define an arrow marker
     arrow_marker = dwg.marker(insert=(2, 2), size=(4, 4), orient="auto")
@@ -611,10 +611,12 @@ def draw_svg(paths, svg_filename, location_coordinates, data, y_shift=100):
 
 """
 Opens the svg in Edge browser and urges user to print it 
+This code attempts to automate the printing of an SVG file to PDF using Selenium.
+However, it does not currently work properly.
 """
 def svgToPdf(path):
     # Start the browser
-    driver = webdriver.Edge()  # Or whichever browser you're using
+    driver = webdriver.chrome()  # Or whichever browser you're using
 
     try:
         # Open the SVG file in the browser
@@ -636,11 +638,21 @@ def svgToPdf(path):
 
 if __name__ == "__main__":
     filename = "SchematicMap"
-    
-    paths, attribtue = svg2paths('Asset12.svg')
+
+    # Path to the SVG file that will be manipulated. The SVG file has been  
+    # created using Adobe Illustrator which will be adjusted based on data provided
+    paths, attribtue = svg2paths(base_svg_path)
+
+    # Read the Excel file containing the data for the schematic
+    # The Excel file contains the flow data for each location in the Souris River Basin
+    #The names in the "Name" column of the Excel file should match the keys in the `location_coordinates` dictionary
     value_datatframe = pd.read_excel(path_to_value_file, "Natural Flow Schematic",usecols=["Name","Name to show", "Cubic Decametres","Acre-feet"],header=1,nrows=25)
     print(value_datatframe)
+
+    # Change the SVG points based on the data from the Excel file
     change_svg_points(paths,location_coordinates,value_datatframe,scale_amount)
+
+    # Draw the SVG with the adjusted paths and labels
     draw_svg(paths,filename, location_coordinates, value_datatframe)
 
     # svgToPdf(f'file:///{os.path.abspath(filename + ".svg")}')
