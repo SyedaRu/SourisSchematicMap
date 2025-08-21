@@ -62,9 +62,6 @@ pip install svgwrite svgpathtools pandas selenium pyautogui reportlab
 ---
 
 ## Customization
-path_to_value_file = "C:/Users/syedaR/Desktop/Souris/2023 NaturalFlowSchematic.xlsx"
-base_svg_path = "Asset12.svg"
-scale_amount = 0.001
 - **Path to Data File:**  
   `path_to_value_file` replace this variable at the top of the script with updated data file. It must have the columns: "Name","Name to show", "Cubic Decametres","Acre-feet".
 - **Path to base SVG file:**  
@@ -78,7 +75,7 @@ scale_amount = 0.001
 
 ## Example Output
 
-![Example SVG Output](Result/2023Souris_SchematicMap.png)  
+![Example SVG Output](SchematicMap.svg)  
 *Sample schematic map with labeled flows and pie chart.*
 
 ---
